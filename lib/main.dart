@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:stay_safe/firebase_options.dart';
 import 'package:stay_safe/core/theme/app_theme.dart';
 import 'package:stay_safe/core/services/notification_service.dart';
 import 'package:stay_safe/features/settings/providers/settings_provider.dart';
@@ -11,7 +12,9 @@ import 'package:stay_safe/shared/widgets/app_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   await NotificationService.initialize();
   runApp(const ProviderScope(child: StaySafeApp()));
 }
