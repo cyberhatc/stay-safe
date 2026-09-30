@@ -67,7 +67,7 @@ class _TrackingScreenState extends ConsumerState<TrackingScreen> {
             itemCount: sessions.length,
             itemBuilder: (context, index) {
               final session = sessions[index].data() as Map<String, dynamic>;
-              final name = session['targetUserName'] as String? ?? 'Unknown';
+              final name = ((session['requesterName'] ?? session['targetUserName']) as String?) ?? 'Unknown';
               final lat = session['latitude'] as double?;
               final lng = session['longitude'] as double?;
 
@@ -86,10 +86,10 @@ class _TrackingScreenState extends ConsumerState<TrackingScreen> {
   Stream<dynamic> _getActiveTrackingSessions() async* {
     final settingsRepo = ref.read(settingsRepositoryProvider);
     final user = await settingsRepo.getUser();
-    final userId = user?['id'] ?? '';
+    final myPhone = user?['phone'] ?? '';
 
     final firestoreService = FirestoreService();
-    yield* firestoreService.listenToActiveTrackingSessions(userId);
+    yield* firestoreService.listenToSharedSessions(myPhone);
   }
 }
 

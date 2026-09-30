@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:stay_safe/core/theme/app_colors.dart';
 import 'package:stay_safe/core/services/firestore_service.dart';
@@ -17,6 +20,171 @@ class WhereAreYouScreen extends ConsumerStatefulWidget {
 class _WhereAreYouScreenState extends ConsumerState<WhereAreYouScreen> {
   bool _isLoading = false;
   String? _selectedContactName;
+  String? _myPhone;
+  StreamSubscription<DocumentSnapshot>? _requestSub;
+
+  @override
+  void dispose() {
+    _requestSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadMyPhone());
+  }
+
+  Future<void> _loadMyPhone() async {
+    final user = await ref.read(settingsRepositoryProvider).getUser();
+    if (mounted && user != null) {
+      setState(() => _myPhone = user['phone']);
+    }
+  }
+
+  Widget _buildIncomingRequests() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirestoreService().listenToPendingRequests(_myPhone!),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox.shrink();
+        }
+
+        final docs = snapshot.data?.docs ?? [];
+        if (docs.isEmpty) return const SizedBox.shrink();
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.sosRed.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.sosRed.withValues(alpha: 0.4)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.notifications_active_outlined,
+                      color: AppColors.sosRed, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${docs.length} incoming request${docs.length == 1 ? '' : 's'}',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ...docs.map((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                final from =
+                    (data['requesterName'] as String?) ?? 'Someone';
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '$from is asking for your location',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _respond(doc.id, status: 'declined'),
+                        child: const Text(
+                          'Decline',
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      ElevatedButton(
+                        onPressed: () => _shareLocation(doc.id),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.secondary,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
+                        ),
+                        child: const Text(
+                          'Share',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _shareLocation(String requestId) async {
+    final position = await LocationService().getCurrentLocation();
+    if (!mounted) return;
+
+    if (position == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not get your location'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+
+    await _respond(
+      requestId,
+      status: 'accepted',
+      latitude: position.latitude,
+      longitude: position.longitude,
+    );
+  }
+
+  Future<void> _respond(
+    String requestId, {
+    required String status,
+    double? latitude,
+    double? longitude,
+  }) async {
+    try {
+      await FirestoreService().respondToLocationRequest(
+        requestId: requestId,
+        status: status,
+        latitude: latitude,
+        longitude: longitude,
+      );
+      if (mounted && status == 'accepted') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Your location was shared'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not respond: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,11 +196,9 @@ class _WhereAreYouScreenState extends ConsumerState<WhereAreYouScreen> {
         title: const Text('Where Are You'),
         backgroundColor: AppColors.secondary,
       ),
-      body: Padding(
+      body: ListView(
         padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+        children: [
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -56,6 +222,10 @@ class _WhereAreYouScreenState extends ConsumerState<WhereAreYouScreen> {
               ),
             ),
             const SizedBox(height: 24),
+            if (_myPhone != null && _myPhone!.isNotEmpty) ...[
+              _buildIncomingRequests(),
+              const SizedBox(height: 24),
+            ],
             const Text(
               'Select a Friend',
               style: TextStyle(
@@ -65,13 +235,17 @@ class _WhereAreYouScreenState extends ConsumerState<WhereAreYouScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            Expanded(
-              child: contactsAsync.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, st) => Center(child: Text('Error: $e')),
-                data: (contacts) {
-                  if (contacts.isEmpty) {
-                    return const Center(
+            ...contactsAsync.when(
+              loading: () => const <Widget>[
+                Center(child: CircularProgressIndicator()),
+              ],
+              error: (e, st) => <Widget>[
+                Center(child: Text('Error: $e')),
+              ],
+              data: (contacts) {
+                if (contacts.isEmpty) {
+                  return <Widget>[
+                    const Center(
                       child: Text(
                         'No contacts available.\nAdd friends in the Friends tab.',
                         textAlign: TextAlign.center,
@@ -79,10 +253,14 @@ class _WhereAreYouScreenState extends ConsumerState<WhereAreYouScreen> {
                           color: AppColors.textSecondary,
                         ),
                       ),
-                    );
-                  }
+                    ),
+                  ];
+                }
 
-                  return ListView.builder(
+                return <Widget>[
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
                     itemCount: contacts.length,
                     itemBuilder: (context, index) {
                       final contact = contacts[index];
@@ -163,9 +341,9 @@ class _WhereAreYouScreenState extends ConsumerState<WhereAreYouScreen> {
                         ),
                       );
                     },
-                  );
-                },
-              ),
+                  ),
+                ];
+              },
             ),
             const SizedBox(height: 16),
             SizedBox(
@@ -204,7 +382,6 @@ class _WhereAreYouScreenState extends ConsumerState<WhereAreYouScreen> {
             const SizedBox(height: 16),
           ],
         ),
-      ),
     );
   }
 
@@ -241,13 +418,32 @@ class _WhereAreYouScreenState extends ConsumerState<WhereAreYouScreen> {
         );
       }
 
-      firestoreService.listenToLocationRequest(requestId).listen((snapshot) {
+      await _requestSub?.cancel();
+      _requestSub = firestoreService
+          .listenToLocationRequest(requestId)
+          .listen((snapshot) {
         final data = snapshot.data() as Map<String, dynamic>?;
-        if (data != null && data['status'] == 'accepted') {
+        if (data == null) return;
+
+        final status = data['status'];
+        if (status == 'accepted') {
           final lat = data['latitude'] as double?;
           final lng = data['longitude'] as double?;
           if (lat != null && lng != null && mounted) {
+            _requestSub?.cancel();
+            _requestSub = null;
             _showLocationResult(selectedContact.name, lat, lng);
+          }
+        } else if (status == 'declined') {
+          _requestSub?.cancel();
+          _requestSub = null;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('${selectedContact.name} declined your request'),
+                backgroundColor: AppColors.error,
+              ),
+            );
           }
         }
       });

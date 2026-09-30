@@ -59,6 +59,15 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(authProvider, (previous, next) {
+      final error = next.error;
+      if (error == null || error == previous?.error) return;
+      if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    });
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(

@@ -15,7 +15,11 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  await NotificationService.initialize();
+  try {
+    await NotificationService.initialize();
+  } catch (_) {
+    // Notifications are optional at startup; never block the app from launching.
+  }
   runApp(const ProviderScope(child: StaySafeApp()));
 }
 

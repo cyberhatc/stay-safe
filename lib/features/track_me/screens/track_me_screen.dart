@@ -206,6 +206,7 @@ class _TrackMeScreenState extends ConsumerState<TrackMeScreen> {
     final firestoreService = FirestoreService();
     final sessionId = await firestoreService.startTrackingSession(
       requesterId: userId,
+      requesterName: user?['name'] ?? 'User',
       targetUserId: contact.phoneNumber,
       targetUserName: contact.name,
     );

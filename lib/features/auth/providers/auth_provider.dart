@@ -53,15 +53,11 @@ class AuthNotifier extends Notifier<AuthState> {
 
   @override
   AuthState build() {
-    _checkLoggedIn();
-    return AuthState();
-  }
-
-  void _checkLoggedIn() {
     final user = _auth.currentUser;
     if (user != null) {
-      state = state.copyWith(userId: user.uid, isloggedIn: true);
+      return AuthState(userId: user.uid, isloggedIn: true);
     }
+    return AuthState();
   }
 
   Future<void> verifyPhoneNumber({

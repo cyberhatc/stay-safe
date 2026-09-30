@@ -13,7 +13,7 @@ final contactsProvider = NotifierProvider<ContactsNotifier, AsyncValue<List<Cont
 class ContactsNotifier extends Notifier<AsyncValue<List<Contact>>> {
   @override
   AsyncValue<List<Contact>> build() {
-    loadContacts();
+    Future.microtask(loadContacts);
     return const AsyncValue.loading();
   }
 

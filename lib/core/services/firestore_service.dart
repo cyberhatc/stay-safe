@@ -63,22 +63,24 @@ class FirestoreService {
     return _firestore.collection('location_requests').doc(requestId).snapshots();
   }
 
-  Stream<QuerySnapshot> listenToPendingRequests(String userId) {
+  Stream<QuerySnapshot> listenToPendingRequests(String targetUserId) {
     return _firestore
         .collection('location_requests')
-        .where('targetUserId', isEqualTo: userId)
+        .where('targetUserId', isEqualTo: targetUserId)
         .where('status', isEqualTo: 'pending')
         .snapshots();
   }
 
   Future<String> startTrackingSession({
     required String requesterId,
+    required String requesterName,
     required String targetUserId,
     required String targetUserName,
   }) async {
     final sessionId = _uuid.v4();
     await _firestore.collection('tracking_sessions').doc(sessionId).set({
       'requesterId': requesterId,
+      'requesterName': requesterName,
       'targetUserId': targetUserId,
       'targetUserName': targetUserName,
       'isActive': true,
@@ -114,6 +116,14 @@ class FirestoreService {
     return _firestore
         .collection('tracking_sessions')
         .where('requesterId', isEqualTo: userId)
+        .where('isActive', isEqualTo: true)
+        .snapshots();
+  }
+
+  Stream<QuerySnapshot> listenToSharedSessions(String targetUserId) {
+    return _firestore
+        .collection('tracking_sessions')
+        .where('targetUserId', isEqualTo: targetUserId)
         .where('isActive', isEqualTo: true)
         .snapshots();
   }
