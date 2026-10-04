@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -45,17 +46,30 @@ class AuthState {
   }
 }
 
-final authProvider = NotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);
+final authProvider = NotifierProvider<AuthNotifier, AuthState>(
+  AuthNotifier.new,
+);
 
 class AuthNotifier extends Notifier<AuthState> {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  /// Demo code accepted when Firebase never hands us a verification id
+  /// (phone auth disabled, no network, emulator, ...).
+  static const String demoOtpCode = '123456';
+
+  /// Resolved lazily so tests can subclass this notifier without a
+  /// bootstrapped Firebase app.
+  FirebaseAuth get _auth => FirebaseAuth.instance;
+
   Timer? _resendTimer;
 
   @override
   AuthState build() {
-    final user = _auth.currentUser;
-    if (user != null) {
-      return AuthState(userId: user.uid, isloggedIn: true);
+    try {
+      final user = _auth.currentUser;
+      if (user != null) {
+        return AuthState(userId: user.uid, isloggedIn: true);
+      }
+    } catch (_) {
+      // Firebase is not bootstrapped (unit tests / early startup).
     }
     return AuthState();
   }
@@ -64,7 +78,11 @@ class AuthNotifier extends Notifier<AuthState> {
     required String phoneNumber,
     required VoidCallback? onCodeSent,
   }) async {
-    state = state.copyWith(isLoading: true, error: null);
+    state = state.copyWith(
+      isLoading: true,
+      error: null,
+      isVerificationSent: false,
+    );
 
     try {
       await _auth.verifyPhoneNumber(
@@ -108,16 +126,34 @@ class AuthNotifier extends Notifier<AuthState> {
     required String emergencyContactName,
     required String emergencyContactPhone,
   }) async {
-    if (state.verificationId == null) {
-      state = state.copyWith(error: 'No verification ID found');
+    if (state.isLoading) {
+      state = state.copyWith(
+        error: 'Still sending the verification code. Please wait a moment.',
+      );
       return;
     }
 
     state = state.copyWith(isLoading: true, error: null);
 
+    final verificationId = state.verificationId;
+
+    if (verificationId == null) {
+      // Firebase never issued a code (phone auth disabled / offline / demo).
+      if (smsCode == demoOtpCode) {
+        await _finishSignIn(userId: 'demo-user', name: name, phone: phone);
+        return;
+      }
+      state = state.copyWith(
+        isLoading: false,
+        error:
+            'We could not send an SMS to this number. Use the demo code $demoOtpCode to continue.',
+      );
+      return;
+    }
+
     try {
       final credential = PhoneAuthProvider.credential(
-        verificationId: state.verificationId!,
+        verificationId: verificationId,
         smsCode: smsCode,
       );
 
@@ -129,24 +165,7 @@ class AuthNotifier extends Notifier<AuthState> {
         return;
       }
 
-      final settingsRepo = ref.read(settingsRepositoryProvider);
-      await settingsRepo.saveUser(userId, name, phone);
-      await settingsRepo.setFirstLaunch(false);
-
-      final firestoreService = FirestoreService();
-      final token = await firestoreService.getUserFcmToken(userId);
-      await firestoreService.saveUser(
-        userId: userId,
-        name: name,
-        phone: phone,
-        fcmToken: token ?? '',
-      );
-
-      state = state.copyWith(
-        isLoading: false,
-        isloggedIn: true,
-        userId: userId,
-      );
+      await _finishSignIn(userId: userId, name: name, phone: phone);
     } on FirebaseAuthException catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -158,6 +177,45 @@ class AuthNotifier extends Notifier<AuthState> {
         error: 'Verification failed. Please try again.',
       );
     }
+  }
+
+  Future<void> _finishSignIn({
+    required String userId,
+    required String name,
+    required String phone,
+  }) async {
+    final settingsRepo = ref.read(settingsRepositoryProvider);
+
+    var resolvedName = name.trim();
+    var resolvedPhone = phone.trim();
+    if (resolvedName.isEmpty || resolvedPhone.isEmpty) {
+      final existing = await settingsRepo.getUser();
+      if (resolvedName.isEmpty) resolvedName = existing?['name'] ?? '';
+      if (resolvedPhone.isEmpty) resolvedPhone = existing?['phone'] ?? phone;
+    }
+
+    await settingsRepo.saveUser(userId, resolvedName, resolvedPhone);
+    await settingsRepo.setFirstLaunch(false);
+
+    try {
+      final firestoreService = FirestoreService();
+      final token = await firestoreService.getUserFcmToken(userId);
+      await firestoreService.saveUser(
+        userId: userId,
+        name: resolvedName,
+        phone: resolvedPhone,
+        fcmToken: token ?? '',
+      );
+    } catch (_) {
+      // Offline or demo user: the local profile is enough to use the app.
+    }
+
+    state = state.copyWith(
+      isLoading: false,
+      isloggedIn: true,
+      userId: userId,
+      error: null,
+    );
   }
 
   void _startResendCooldown() {
